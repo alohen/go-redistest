@@ -4,20 +4,18 @@ import (
 	"fmt"
 	"sync"
 	"time"
-	"path"
-	"path/filepath"
 	"github.com/gobwas/glob"
 )
 
 // Key Type enumeration
-type KeyType int
+type KeyType string
 
 const (
-	StringKeyType    KeyType = 0
-	ListKeyType      KeyType = 1
-	HashKeyType      KeyType = 2
-	SetKeyType       KeyType = 3
-	SortedSetKeyType KeyType = 4
+	StringKeyType    KeyType = "string"
+	ListKeyType      KeyType = "list"
+	HashKeyType      KeyType = "hash"
+	SetKeyType       KeyType = "set"
+	SortedSetKeyType KeyType = "zset"
 )
 
 type RedisDB struct {
@@ -35,7 +33,7 @@ func (db *RedisDB) DEL(key string) error {
 	defer db.lock.Unlock()
 
 	keyType := db.locateKey(key)
-	if keyType == -1 {
+	if keyType == "" {
 		fmt.Errorf("key is missing")
 	}
 
@@ -44,10 +42,16 @@ func (db *RedisDB) DEL(key string) error {
 }
 
 func (db *RedisDB) EXISTS(key string) bool {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	return db.locateKey(key) != -1
 }
 
 func (db *RedisDB) EXPIRE(key string, seconds int) int64 {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	if err := db.setTTL(key, time.Duration(seconds)*time.Second); err != nil {
 		return -1
 	}
@@ -55,6 +59,9 @@ func (db *RedisDB) EXPIRE(key string, seconds int) int64 {
 }
 
 func (db *RedisDB) EXPIREAT(key string, timestamp int64) int64 {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	expirationTime := time.Unix(timestamp,0)
 	if err := db.setExpirationTime(key, expirationTime) ;err != nil {
 		return -1
@@ -63,6 +70,9 @@ func (db *RedisDB) EXPIREAT(key string, timestamp int64) int64 {
 }
 
 func (db *RedisDB) PEXPIRE(key string, milliseconds int) int64 {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	if err := db.setTTL(key, time.Duration(milliseconds)*time.Millisecond); err != nil {
 		return -1
 	}
@@ -71,6 +81,9 @@ func (db *RedisDB) PEXPIRE(key string, milliseconds int) int64 {
 }
 
 func (db *RedisDB) PEAPIREAT(key string, timestamp int64) int64 {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	expirationTime := time.Unix(0,timestamp * 1000000)
 	if err := db.setExpirationTime(key, expirationTime) ;err != nil {
 		return -1
@@ -79,6 +92,9 @@ func (db *RedisDB) PEAPIREAT(key string, timestamp int64) int64 {
 }
 
 func (db *RedisDB) KEYS(globString string) []string {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	var matchedKeys []string
 	searchGlob := glob.MustCompile(globString)
 	for key := range db.keysToTypes {
@@ -91,8 +107,11 @@ func (db *RedisDB) KEYS(globString string) []string {
 }
 
 func (db *RedisDB) TTL(key string) int64 {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	keyType := db.locateKey(key)
-	if keyType == -1 {
+	if keyType == "" {
 		return -1
 	}
 
@@ -101,8 +120,11 @@ func (db *RedisDB) TTL(key string) int64 {
 }
 
 func (db *RedisDB) PTTL(key string) int64 {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	keyType := db.locateKey(key)
-	if keyType == -1 {
+	if keyType == "" {
 		return -1
 	}
 
@@ -111,8 +133,11 @@ func (db *RedisDB) PTTL(key string) int64 {
 }
 
 func (db *RedisDB) PERSIST(key string) int64 {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	keyType := db.locateKey(key)
-	if keyType == -1 {
+	if keyType == "" {
 		return 0
 	}
 
@@ -122,11 +147,86 @@ func (db *RedisDB) PERSIST(key string) int64 {
 	return 1
 }
 
+func (db *RedisDB) RENAME(key string, newKey string) string {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	keyType := db.locateKey(key)
+	if keyType == "" {
+		return "ERROR"
+	}
+
+	switch keyType{
+	case StringKeyType:
+		db.StringKeys[newKey] = db.StringKeys[key]
+	case ListKeyType:
+		db.ListKeys[newKey] = db.ListKeys[key]
+	case HashKeyType:
+		db.HashKeys[newKey] = db.HashKeys[key]
+	case SetKeyType:
+		db.SetKeys[newKey] = db.SetKeys[key]
+	case SortedSetKeyType:
+		db.SortedSetKeys[newKey] = db.SortedSetKeys[key]
+	}
+
+	if err := db.DEL(key); err != nil {
+		return err.Error()
+	}
+
+	return "OK"
+}
+
+func (db *RedisDB) RENAMENX(key string, newKey string) string {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	keyType := db.locateKey(key)
+	if keyType == "" {
+		return "ERROR"
+	}
+
+	newKeyType := db.locateKey(newKey)
+	if newKeyType != "" {
+		return "ERROR"
+	}
+
+	switch keyType{
+	case StringKeyType:
+		db.StringKeys[newKey] = db.StringKeys[key]
+	case ListKeyType:
+		db.ListKeys[newKey] = db.ListKeys[key]
+	case HashKeyType:
+		db.HashKeys[newKey] = db.HashKeys[key]
+	case SetKeyType:
+		db.SetKeys[newKey] = db.SetKeys[key]
+	case SortedSetKeyType:
+		db.SortedSetKeys[newKey] = db.SortedSetKeys[key]
+	}
+
+	if err := db.DEL(key); err != nil {
+		return err.Error()
+	}
+
+	return "OK"
+}
+
+func (db *RedisDB) TYPE(key string) string {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	keyType := db.locateKey(key)
+	if keyType == "" {
+		return "none"
+	}
+
+	return string(keyType)
+}
+
 
 // utility functions
 func (db *RedisDB) setTTL(key string, duration time.Duration) error {
 	keyType := db.locateKey(key)
-	if keyType == -1 {
+	if keyType == "" {
 		return fmt.Errorf("missing key")
 	}
 
@@ -141,7 +241,7 @@ func (db *RedisDB) setTTL(key string, duration time.Duration) error {
 
 func (db *RedisDB) setExpirationTime(key string, duration time.Time) error {
 	keyType := db.locateKey(key)
-	if keyType == -1 {
+	if keyType == "" {
 		return fmt.Errorf("missing key")
 	}
 
@@ -189,11 +289,11 @@ func (db *RedisDB) deleteKeyByType(key string, keyType KeyType) {
 func (db *RedisDB) locateKey(key string) (KeyType) {
 	keyType, exists := db.keysToTypes[key]
 	if !exists {
-		return -1
+		return ""
 	}
 
 	if db.deleteKeyIfExpired(key, keyType) {
-		return -1
+		return ""
 	}
 
 	return keyType
@@ -215,7 +315,7 @@ func (db *RedisDB) deleteKeyIfExpired(key string, keyType KeyType) bool {
 
 func (db *RedisDB) validateKeyType(key string, keyType KeyType) (bool, error) {
 	typeInDB := db.locateKey(key)
-	if keyType == -1 {
+	if keyType == "" {
 		return false, fmt.Errorf("key not found")
 	}
 
