@@ -43,7 +43,7 @@ func (db *RedisDB) SET(key string, value string) error {
 
 	keyType := db.locateKey(key)
 	// if the key exists and is not string
-	if keyType != -1 && keyType != StringKeyType {
+	if keyType != "" && keyType != StringKeyType {
 		return fmt.Errorf("wrong key type")
 	}
 
